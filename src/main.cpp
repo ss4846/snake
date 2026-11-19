@@ -11,6 +11,19 @@ struct Cell{
     int y;
 };
 
+enum class GameState {Playing, GameOver};
+
+struct Game {
+    std::deque<Cell> snake;
+    Cell direction = {1, 0};
+    Cell nextDirection = {1, 0};
+    float moveTimer = 0.0f;
+    Cell food = {0, 0};
+    GameState state = GameState::Playing;
+    int score = 0;
+};
+
+
 Cell spawnFood(const std::deque<Cell>& snake){
     Cell food;
     bool onSnake = false;
@@ -32,15 +45,14 @@ Cell spawnFood(const std::deque<Cell>& snake){
     return food;
 }
 
-enum class GameState {Playing, GameOver};
-
-void ResetGame(std::deque<Cell>& snake, Cell& direction, Cell& nextDirection,float& moveTimer, Cell& food, GameState& state) {
-    snake = { {10, 10}, {9, 10}, {8, 10} };             //head is first(cell co-ords not pixels)
-    direction = {1, 0};                                 //1 cell right per move
-    nextDirection = direction;
-    moveTimer = 0.0f;                                   //time since last move
-    food = spawnFood(snake);
-    state = GameState::Playing;
+void ResetGame(Game& game) {
+    game.snake = { {10, 10}, {9, 10}, {8, 10} };             //head is first(cell co-ords not pixels)
+    game.direction = {1, 0};                                 //1 cell right per move
+    game.nextDirection = game.direction;
+    game.moveTimer = 0.0f;                                   //time since last move
+    game.food = spawnFood(game.snake);
+    game.state = GameState::Playing;
+    game.score = 0;
 }
 
 
@@ -51,61 +63,55 @@ int main(){
     InitWindow(screenWidth, screenHeight, "Snake");
     SetTargetFPS(60);
 
-    std::deque<Cell> snake;    
-    Cell direction;                                   
-    Cell nextDirection;
-    float moveTimer;                                     
+    Game game;
+    ResetGame(game);                                 
     const float MOVE_INTERVAL = 0.15f;            //move every 0.15s
-    Cell food;
-    GameState state = GameState::Playing;
-
-    ResetGame(snake, direction, nextDirection, moveTimer, food, state);
-    
 
     while(!WindowShouldClose()){
 
-        moveTimer += GetFrameTime();        //seconds since last frame
+        game.moveTimer += GetFrameTime();        //seconds since last frame
 
         //game reset
-        if (state == GameState::GameOver && IsKeyPressed(KEY_R)){
-            ResetGame(snake, direction, nextDirection, moveTimer, food, state);
+        if (game.state == GameState::GameOver && IsKeyPressed(KEY_R)){
+            ResetGame(game);
         }
 
         //inputs
-        if (IsKeyPressed(KEY_UP) && direction.y != 1) {
-            nextDirection = {0, -1};
+        if (IsKeyPressed(KEY_UP) && game.direction.y != 1) {
+            game.nextDirection = {0, -1};
         }
-        if (IsKeyPressed(KEY_DOWN) && direction.y != -1) {
-            nextDirection = {0, 1};
+        if (IsKeyPressed(KEY_DOWN) && game.direction.y != -1) {
+            game.nextDirection = {0, 1};
         }
-        if (IsKeyPressed(KEY_LEFT) && direction.x != 1) {
-            nextDirection = {-1, 0};
+        if (IsKeyPressed(KEY_LEFT) && game.direction.x != 1) {
+            game.nextDirection = {-1, 0};
         }
-        if (IsKeyPressed(KEY_RIGHT) && direction.x != -1) {
-            nextDirection = {1, 0};
+        if (IsKeyPressed(KEY_RIGHT) && game.direction.x != -1) {
+            game.nextDirection = {1, 0};
         }
 
-        if (moveTimer >= MOVE_INTERVAL && state == GameState::Playing) {
-            moveTimer -= MOVE_INTERVAL;
+        if (game.moveTimer >= MOVE_INTERVAL && game.state == GameState::Playing) {
+            game.moveTimer -= MOVE_INTERVAL;
 
             //snake movement
-            direction = nextDirection;
-            Cell new_head = {snake.front().x + direction.x, snake.front().y + direction.y};
+            game.direction = game.nextDirection;
+            Cell new_head = {game.snake.front().x + game.direction.x, game.snake.front().y + game.direction.y};
             
             //dead condition
             bool dead = false;
             if (new_head.x < 0 || new_head.x >= GRID_COLS || new_head.y < 0 || new_head.y >= GRID_ROWS) dead = true;
-            for (const Cell& c: snake){
+            for (const Cell& c: game.snake){
                 if (new_head.x == c.x && new_head.y == c.y) dead = true;
             }
             if (dead){
-                state = GameState::GameOver;
+                game.state = GameState::GameOver;
             } else{
-                snake.push_front(new_head);
-                if (new_head.x == food.x && new_head.y == food.y) {
-                    food = spawnFood(snake);
+                game.snake.push_front(new_head);
+                if (new_head.x == game.food.x && new_head.y == game.food.y) {
+                    game.food = spawnFood(game.snake);
+                    game.score++;
                 } else {
-                    snake.pop_back();
+                    game.snake.pop_back();
                 }
             }
         }
@@ -121,13 +127,14 @@ int main(){
             DrawLine(j*CELL_SIZE, 0, j*CELL_SIZE, screenHeight, DARKGRAY);
         }
 
-        for( const Cell& c: snake ){                                                //draw snake
+        for( const Cell& c: game.snake ){                                                //draw snake
             DrawRectangle(1 + c.x * CELL_SIZE, 1 + c.y * CELL_SIZE, CELL_SIZE-2, CELL_SIZE-2, GREEN);
         }
 
-        DrawRectangle(1 + food.x * CELL_SIZE, 1 + food.y * CELL_SIZE, CELL_SIZE-2, CELL_SIZE-2, RED);
+        DrawRectangle(1 + game.food.x * CELL_SIZE, 1 + game.food.y * CELL_SIZE, CELL_SIZE-2, CELL_SIZE-2, RED);
 
-        if ( state == GameState::GameOver ){
+        DrawText(TextFormat("Score: %d", game.score), 10, 10, 20, WHITE);
+        if ( game.state == GameState::GameOver ){
             const char* gameover_text = "GAME OVER";
             const char* restart_text = "Press R to restart";
             DrawText(gameover_text, screenWidth / 2 - MeasureText(gameover_text, 40) / 2, 200, 40, RED);
