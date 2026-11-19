@@ -1,6 +1,8 @@
 #include "raylib.h"
 #include <deque>
 #include <random>
+#include <queue>
+#include <vector>
 
 const int CELL_SIZE = 30;       //each cell is 30x30
 const int GRID_COLS = 20;       //no.of cells horizontally
@@ -21,6 +23,7 @@ struct Game {
     Cell food = {0, 0};
     GameState state = GameState::Playing;
     int score = 0;
+    bool aiEnabled = false;
 };
 
 
@@ -29,13 +32,17 @@ Cell spawnFood(const std::deque<Cell>& snake){
     bool onSnake = false;
 
     do {
-        std::random_device rd;
-        std::mt19937 gen(rd());
+        onSnake = false;
+        // std::random_device rd;
+        // std::mt19937 gen(rd());
 
-        std::uniform_int_distribution<int> dist_rows(0, GRID_ROWS-1);
-        std::uniform_int_distribution<int> dist_cols(0, GRID_COLS-1);
+        // std::uniform_int_distribution<int> dist_rows(0, GRID_ROWS-1);
+        // std::uniform_int_distribution<int> dist_cols(0, GRID_COLS-1);
 
-        food = {dist_cols(gen), dist_rows(gen)};
+        // food = {dist_cols(gen), dist_rows(gen)};
+
+        food.x = GetRandomValue(0, GRID_COLS-1);
+        food.y = GetRandomValue(0, GRID_ROWS-1);
 
         for ( const Cell& c: snake ){
             if (c.x == food.x && c.y == food.y) onSnake = true;
@@ -53,6 +60,7 @@ void ResetGame(Game& game) {
     game.food = spawnFood(game.snake);
     game.state = GameState::Playing;
     game.score = 0;
+    game.aiEnabled = false;
 }
 
 void HandleInput(Game& game){
@@ -117,12 +125,90 @@ void Draw(const Game& game){
     DrawRectangle(1 + game.food.x * CELL_SIZE, 1 + game.food.y * CELL_SIZE, CELL_SIZE-2, CELL_SIZE-2, RED);
 
     DrawText(TextFormat("Score: %d", game.score), 10, 10, 20, WHITE);
+
     if ( game.state == GameState::GameOver ){
         const char* gameover_text = "GAME OVER";
         const char* restart_text = "Press R to restart";
         DrawText(gameover_text, (CELL_SIZE * GRID_COLS) / 2 - MeasureText(gameover_text, 40) / 2, 200, 40, RED);
         DrawText(restart_text, (CELL_SIZE * GRID_COLS) / 2  - MeasureText(restart_text, 30) / 2, 300, 30, BLUE);
     }
+
+    if (game.aiEnabled){
+        const char* ai_on_text = "AI Mode: ON";
+        DrawText(ai_on_text, (CELL_SIZE * GRID_COLS) - MeasureText(ai_on_text, 20)-10, 10, 20, WHITE);
+    } else{
+        const char* ai_off_text = "AI Mode: OFF";
+        DrawText(ai_off_text, (CELL_SIZE * GRID_COLS) - MeasureText(ai_off_text, 20)-10, 10, 20, WHITE);
+    }
+}
+
+//Looks at the game and decides which direction to move next
+Cell ChooseDirection(const Game& game){
+
+    Cell head = game.snake.front();
+    //blocked[y][x] is true if snake segment occupies that cell
+    std::vector<std::vector<bool>> blocked(GRID_ROWS, std::vector<bool>(GRID_COLS, false));
+
+    for (const Cell& c: game.snake) {
+        blocked[c.y][c.x] = true;
+    }
+
+    //parent[y][x] = the cell we came from to reach (x,y)
+    //{-1, -1} means unvisited
+    std::vector<std::vector<Cell>> parent(GRID_ROWS, std::vector<Cell>(GRID_COLS, Cell{-1, -1}));
+
+    std::queue<Cell> frontier;
+    frontier.push(head);
+    parent[head.y][head.x] = head;      //the start counts as visited
+
+    const Cell dirs[4] = { {1, 0}, {0, 1}, {-1, 0}, {0, -1} };
+
+    bool found = false;
+    while(!frontier.empty() && !found){
+        Cell current = frontier.front();
+        frontier.pop();
+
+        for (const Cell& d: dirs) {
+            Cell next = {current.x+d.x, current.y+d.y};
+            
+            if(next.x < 0 || next.x >= GRID_COLS || next.y < 0 || next.y >= GRID_ROWS){
+                //if next cell is out of the grid
+                continue;
+            }
+
+            if(blocked[next.y][next.x]) continue; //if next cell lies on snake's body/blocked
+
+            if(parent[next.y][next.x].x != -1) continue;    //already visited
+
+            parent[next.y][next.x] = current;
+            frontier.push(next);
+
+            //if food is found then break
+            if(next.x == game.food.x && next.y == game.food.y){
+                found = true;
+                break;
+            }
+        }
+    }
+
+    if(!found){
+        for(const Cell& d: dirs){
+            Cell next = {head.x+d.x, head.y+d.y};
+            if(next.x < 0 || next.x >= GRID_COLS || next.y < 0 || next.y >= GRID_ROWS){
+                continue;
+            }
+            if(d.x == -game.direction.x && d.y == -game.direction.y) continue;
+            if(blocked[next.y][next.x]) continue;
+            return d;
+        }
+        return game.direction;
+    }
+        
+    Cell step = game.food;
+    while(parent[step.y][step.x].x != head.x || parent[step.y][step.x].y != head.y){
+        step = parent[step.y][step.x];
+    }
+    return Cell{step.x - head.x, step.y - head.y};
 }
 
 
@@ -135,14 +221,21 @@ int main(){
 
     Game game;
     ResetGame(game);                                 
-    const float MOVE_INTERVAL = 0.15f;            //move every 0.15s
+    const float MOVE_INTERVAL = 0.05f;            //move every 0.15s
+
+    
 
     while(!WindowShouldClose()){
         HandleInput(game);
 
+        if(IsKeyPressed(KEY_A)) game.aiEnabled = true;
+
         game.moveTimer += GetFrameTime();        //seconds since last frame
         if (game.moveTimer >= MOVE_INTERVAL && game.state == GameState::Playing) {
             game.moveTimer -= MOVE_INTERVAL;
+            if (game.aiEnabled){
+                game.nextDirection = ChooseDirection(game);
+            }
             Step(game);
         }
 
