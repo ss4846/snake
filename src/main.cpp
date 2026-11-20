@@ -1,8 +1,9 @@
 #include "raylib.h"
 #include <deque>
-#include <random>
 #include <queue>
 #include <vector>
+#include <fstream>
+#include <iostream>
 
 const int CELL_SIZE = 30;       //each cell is 30x30
 const int GRID_COLS = 20;       //no.of cells horizontally
@@ -13,7 +14,7 @@ struct Cell{
     int y;
 };
 
-enum class GameState {Playing, GameOver};
+enum class GameState {Playing, GameOver, GameWin};
 const Cell DIRS[4] = { {1, 0}, {0, 1}, {-1, 0}, {0, -1} };
 
 struct Game {
@@ -28,24 +29,21 @@ struct Game {
 };
 
 
-Cell spawnFood(const std::deque<Cell>& snake){
+Cell spawnFood(Game& game){
     Cell food;
     bool onSnake = false;
 
     do {
+        if(game.snake.size() == GRID_COLS*GRID_ROWS){
+            game.state = GameState::GameWin;
+            break;
+        }
         onSnake = false;
-        // std::random_device rd;
-        // std::mt19937 gen(rd());
-
-        // std::uniform_int_distribution<int> dist_rows(0, GRID_ROWS-1);
-        // std::uniform_int_distribution<int> dist_cols(0, GRID_COLS-1);
-
-        // food = {dist_cols(gen), dist_rows(gen)};
 
         food.x = GetRandomValue(0, GRID_COLS-1);
         food.y = GetRandomValue(0, GRID_ROWS-1);
 
-        for ( const Cell& c: snake ){
+        for ( const Cell& c: game.snake ){
             if (c.x == food.x && c.y == food.y) onSnake = true;
         }
     } while (onSnake);
@@ -58,10 +56,10 @@ void ResetGame(Game& game) {
     game.direction = {1, 0};                                 //1 cell right per move
     game.nextDirection = game.direction;
     game.moveTimer = 0.0f;                                   //time since last move
-    game.food = spawnFood(game.snake);
+    game.food = spawnFood(game);
     game.state = GameState::Playing;
     game.score = 0;
-    game.aiEnabled = false;
+    // game.aiEnabled = false;
 }
 
 void HandleInput(Game& game){
@@ -97,11 +95,18 @@ void Step(Game& game){
         if (new_head.x == c.x && new_head.y == c.y) dead = true;
     }
     if (dead){
+        std::ofstream outFile("scores.txt", std::ios::app);
+        if (outFile.is_open()) {
+            outFile << game.score << "\n";
+            outFile.close();
+        } else {
+            std::cerr << "Error opening file";
+        }
         game.state = GameState::GameOver;
     } else{
         game.snake.push_front(new_head);
         if (new_head.x == game.food.x && new_head.y == game.food.y) {
-            game.food = spawnFood(game.snake);
+            game.food = spawnFood(game);
             game.score++;
         } else {
             game.snake.pop_back();
@@ -111,11 +116,11 @@ void Step(Game& game){
 
 void Draw(const Game& game){
     ClearBackground(BLACK);
-    for(int i=1; i<20; i++){                                            //horizontal lines
+    for(int i=1; i<GRID_ROWS; i++){                                            //horizontal lines
         DrawLine(0, i*CELL_SIZE, CELL_SIZE * GRID_COLS, i*CELL_SIZE, DARKGRAY);
     }
 
-    for(int j=1; j<20; j++){                                            //vertical lines    
+    for(int j=1; j<GRID_COLS; j++){                                            //vertical lines    
         DrawLine(j*CELL_SIZE, 0, j*CELL_SIZE, CELL_SIZE * GRID_ROWS, DARKGRAY);
     }
 
@@ -134,6 +139,11 @@ void Draw(const Game& game){
         DrawText(restart_text, (CELL_SIZE * GRID_COLS) / 2  - MeasureText(restart_text, 30) / 2, 300, 30, BLUE);
     }
 
+    if ( game.state == GameState::GameWin ){
+        const char* gamewin_text = "YOU WON!";
+        DrawText(gamewin_text, (CELL_SIZE * GRID_COLS) / 2 - MeasureText(gamewin_text, 50) / 2, 300, 50, GREEN);
+    }
+
     if (game.aiEnabled){
         const char* ai_on_text = "AI Mode: ON";
         DrawText(ai_on_text, (CELL_SIZE * GRID_COLS) - MeasureText(ai_on_text, 20)-10, 10, 20, WHITE);
@@ -147,6 +157,10 @@ void Draw(const Game& game){
 int CountReachable(const std::vector<std::vector<bool>>& blocked, Cell start){
     std::vector<std::vector<bool>> visited(GRID_ROWS, std::vector<bool>(GRID_COLS, false));
     std::queue<Cell> check_cells;
+
+    if(blocked[start.y][start.x]) return 0;
+    if(start.x < 0 || start.x >= GRID_COLS || start.y < 0 || start.y >= GRID_ROWS) return 0;
+
     check_cells.push(start);
     visited[start.y][start.x] = true;
     int count = 0;
@@ -217,45 +231,52 @@ Cell ChooseDirection(const Game& game){
         }
     }
 
-    if(!found){
-        Cell bestDir = game.direction;
-        int bestCount = -1;
-        for(const Cell& d: DIRS){
-            Cell next = {head.x+d.x, head.y+d.y};
-            int space = CountReachable(blocked, next);
-            if(bestCount < space){
-                bestCount = space;
-                bestDir = d;
-            }
+    bool is_risky = false;
+    Cell bestDir = game.direction;
+    if(found){
+        Cell step = game.food;
+        while(parent[step.y][step.x].x != head.x || parent[step.y][step.x].y != head.y){
+            step = parent[step.y][step.x];
         }
-        return bestDir;
+        Cell bestDir = Cell{step.x - head.x, step.y - head.y};
+
+        if (CountReachable(blocked, {head.x+bestDir.x, head.y+bestDir.y}) < game.snake.size()){
+            is_risky = true;
+        }
+        if(!is_risky) return bestDir;
     }
-        
-    Cell step = game.food;
-    while(parent[step.y][step.x].x != head.x || parent[step.y][step.x].y != head.y){
-        step = parent[step.y][step.x];
+    int bestCount = -1;
+    for(const Cell& d: DIRS){
+        Cell next = {head.x+d.x, head.y+d.y};
+        if(next.x < 0 || next.x >= GRID_COLS || next.y < 0 || next.y >= GRID_ROWS) continue;
+        if(blocked[next.y][next.x]) continue;   
+        int space = CountReachable(blocked, next);
+        if(bestCount < space){
+            bestCount = space;
+            bestDir = d;
+        }
     }
-    return Cell{step.x - head.x, step.y - head.y};
+    return bestDir;
 }
 
 
 int main(){
-    int screenWidth = 600;
-    int screenHeight = 600;
+    int screenWidth = GRID_COLS * CELL_SIZE;
+    int screenHeight = GRID_ROWS * CELL_SIZE;
 
     InitWindow(screenWidth, screenHeight, "Snake");
     SetTargetFPS(60);
 
     Game game;
     ResetGame(game);                                 
-    const float MOVE_INTERVAL = 0.15f;            //move every 0.15s
+    const float MOVE_INTERVAL = 0.07f;            //move every 0.15s
 
     
 
     while(!WindowShouldClose()){
         HandleInput(game);
 
-        if(IsKeyPressed(KEY_A)) game.aiEnabled = true;
+        if(IsKeyPressed(KEY_A)) game.aiEnabled = !game.aiEnabled;
 
         game.moveTimer += GetFrameTime();        //seconds since last frame
         if (game.moveTimer >= MOVE_INTERVAL && game.state == GameState::Playing) {
