@@ -14,6 +14,7 @@ struct Cell{
 };
 
 enum class GameState {Playing, GameOver};
+const Cell DIRS[4] = { {1, 0}, {0, 1}, {-1, 0}, {0, -1} };
 
 struct Game {
     std::deque<Cell> snake;
@@ -142,6 +143,33 @@ void Draw(const Game& game){
     }
 }
 
+//Counts how many free cells can be reached from start without crossing the snake
+int CountReachable(const std::vector<std::vector<bool>>& blocked, Cell start){
+    std::vector<std::vector<bool>> visited(GRID_ROWS, std::vector<bool>(GRID_COLS, false));
+    std::queue<Cell> check_cells;
+    check_cells.push(start);
+    visited[start.y][start.x] = true;
+    int count = 0;
+    while(!check_cells.empty()){
+        Cell current = check_cells.front();
+        check_cells.pop();
+        count++;
+
+        for(const Cell& d: DIRS){
+            Cell next = {d.x+current.x, d.y+current.y}; 
+            if(next.x < 0 || next.x >= GRID_COLS || next.y < 0 || next.y >= GRID_ROWS){
+                continue;
+            }
+            if(blocked[next.y][next.x]) continue;
+            if(visited[next.y][next.x]) continue;
+
+            visited[next.y][next.x] = true;
+            check_cells.push(next);
+        }
+    }
+    return count;
+}
+
 //Looks at the game and decides which direction to move next
 Cell ChooseDirection(const Game& game){
 
@@ -161,14 +189,12 @@ Cell ChooseDirection(const Game& game){
     frontier.push(head);
     parent[head.y][head.x] = head;      //the start counts as visited
 
-    const Cell dirs[4] = { {1, 0}, {0, 1}, {-1, 0}, {0, -1} };
-
     bool found = false;
     while(!frontier.empty() && !found){
         Cell current = frontier.front();
         frontier.pop();
 
-        for (const Cell& d: dirs) {
+        for (const Cell& d: DIRS) {
             Cell next = {current.x+d.x, current.y+d.y};
             
             if(next.x < 0 || next.x >= GRID_COLS || next.y < 0 || next.y >= GRID_ROWS){
@@ -192,16 +218,17 @@ Cell ChooseDirection(const Game& game){
     }
 
     if(!found){
-        for(const Cell& d: dirs){
+        Cell bestDir = game.direction;
+        int bestCount = -1;
+        for(const Cell& d: DIRS){
             Cell next = {head.x+d.x, head.y+d.y};
-            if(next.x < 0 || next.x >= GRID_COLS || next.y < 0 || next.y >= GRID_ROWS){
-                continue;
+            int space = CountReachable(blocked, next);
+            if(bestCount < space){
+                bestCount = space;
+                bestDir = d;
             }
-            if(d.x == -game.direction.x && d.y == -game.direction.y) continue;
-            if(blocked[next.y][next.x]) continue;
-            return d;
         }
-        return game.direction;
+        return bestDir;
     }
         
     Cell step = game.food;
@@ -221,7 +248,7 @@ int main(){
 
     Game game;
     ResetGame(game);                                 
-    const float MOVE_INTERVAL = 0.05f;            //move every 0.15s
+    const float MOVE_INTERVAL = 0.15f;            //move every 0.15s
 
     
 
