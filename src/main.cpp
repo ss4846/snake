@@ -4,10 +4,16 @@
 #include <vector>
 #include <fstream>
 #include <iostream>
+#include <iomanip>
+#include <string>
+#include <algorithm>
+#include <time.h>
+#include <math.h>
 
 const int CELL_SIZE = 30;       //each cell is 30x30
 const int GRID_COLS = 20;       //no.of cells horizontally
 const int GRID_ROWS = 20;       //no.of cells vertically
+double RISK_FACTOR = 1.0;
 
 struct Cell{
     int x;
@@ -30,7 +36,7 @@ struct Game {
 
 
 Cell spawnFood(Game& game){
-    Cell food;
+    Cell food = {-1, -1};
     bool onSnake = false;
 
     do {
@@ -64,7 +70,7 @@ void ResetGame(Game& game) {
 
 void HandleInput(Game& game){
     //game reset
-    if (game.state == GameState::GameOver && IsKeyPressed(KEY_R)){
+    if ((game.state == GameState::GameOver || game.state == GameState::GameWin) && IsKeyPressed(KEY_R)){
         ResetGame(game);
     }
 
@@ -95,13 +101,6 @@ void Step(Game& game){
         if (new_head.x == c.x && new_head.y == c.y) dead = true;
     }
     if (dead){
-        std::ofstream outFile("scores.txt", std::ios::app);
-        if (outFile.is_open()) {
-            outFile << game.score << "\n";
-            outFile.close();
-        } else {
-            std::cerr << "Error opening file";
-        }
         game.state = GameState::GameOver;
     } else{
         game.snake.push_front(new_head);
@@ -141,7 +140,9 @@ void Draw(const Game& game){
 
     if ( game.state == GameState::GameWin ){
         const char* gamewin_text = "YOU WON!";
-        DrawText(gamewin_text, (CELL_SIZE * GRID_COLS) / 2 - MeasureText(gamewin_text, 50) / 2, 300, 50, GREEN);
+        const char* gamewin_rest_text = "Press R to restart";
+        DrawText(gamewin_text, (CELL_SIZE * GRID_COLS) / 2 - MeasureText(gamewin_text, 40) / 2, 300, 40, GREEN);
+        DrawText(gamewin_rest_text, (CELL_SIZE * GRID_COLS) / 2  - MeasureText(gamewin_rest_text, 30) / 2, 300, 30, BLUE);
     }
 
     if (game.aiEnabled){
@@ -158,8 +159,8 @@ int CountReachable(const std::vector<std::vector<bool>>& blocked, Cell start){
     std::vector<std::vector<bool>> visited(GRID_ROWS, std::vector<bool>(GRID_COLS, false));
     std::queue<Cell> check_cells;
 
-    if(blocked[start.y][start.x]) return 0;
     if(start.x < 0 || start.x >= GRID_COLS || start.y < 0 || start.y >= GRID_ROWS) return 0;
+    if(blocked[start.y][start.x]) return 0;
 
     check_cells.push(start);
     visited[start.y][start.x] = true;
@@ -231,19 +232,17 @@ Cell ChooseDirection(const Game& game){
         }
     }
 
-    bool is_risky = false;
     Cell bestDir = game.direction;
     if(found){
         Cell step = game.food;
         while(parent[step.y][step.x].x != head.x || parent[step.y][step.x].y != head.y){
             step = parent[step.y][step.x];
         }
-        Cell bestDir = Cell{step.x - head.x, step.y - head.y};
+        Cell pathDir = Cell{step.x - head.x, step.y - head.y};
 
-        if (CountReachable(blocked, {head.x+bestDir.x, head.y+bestDir.y}) < game.snake.size()){
-            is_risky = true;
+        if (CountReachable(blocked, {head.x+pathDir.x, head.y+pathDir.y}) >= RISK_FACTOR*game.snake.size()){
+            return pathDir;
         }
-        if(!is_risky) return bestDir;
     }
     int bestCount = -1;
     for(const Cell& d: DIRS){
@@ -259,19 +258,96 @@ Cell ChooseDirection(const Game& game){
     return bestDir;
 }
 
+//play one full game with no window, returns the final score
+int PlayHeadless() {
+    Game game;
+    ResetGame(game);
+    int step_counter = 0;
+    int last_score = 0;
+    int last_score_step = 0;
+    while(game.state == GameState::Playing){
+        game.nextDirection = ChooseDirection(game);
+        Step(game);
+        step_counter++;
+        if(last_score < game.score){
+            last_score = game.score;
+            last_score_step = step_counter-1;
+        }
+        if(step_counter - last_score_step > 2000){
+            break;
+        }
+    }
+    return game.score;
+}
 
-int main(){
+int main(int argc, char** argv){
     int screenWidth = GRID_COLS * CELL_SIZE;
     int screenHeight = GRID_ROWS * CELL_SIZE;
+
+    if(argc > 1 && std::string(argv[1]) == "--headless"){
+        if(argc > 2){
+            RISK_FACTOR = std::stod(argv[2]);
+        }
+        const int NUM_GAMES = 1000;
+        std::vector<int> score_list;
+        int best, worst;
+        double mean, median, standard_dev, standard_error;
+        SetRandomSeed(42);
+        for(int i=0; i<NUM_GAMES; i++){
+            int headless_score = PlayHeadless();
+            score_list.push_back(headless_score);
+        }
+        int sum = 0;
+        for(int score: score_list){
+            sum += score;
+        }
+        mean = static_cast<double>(sum) / (double)score_list.size();
+        std::sort(score_list.begin(), score_list.end());
+        if(score_list.size()%2 != 0){
+            median = score_list[score_list.size()/2];
+        } else{
+            median = (score_list[score_list.size()/2] + score_list[score_list.size()/2-1])/2.0;
+        }
+        best = score_list[score_list.size()-1];
+        worst = score_list[0];
+
+        //standard deviation
+        double sum_sq_diff = 0.0;
+        for(int score: score_list){
+            double diff = score - mean;
+            sum_sq_diff += diff*diff;
+        }
+        double variance = sum_sq_diff / score_list.size();
+        standard_dev = std::sqrt(variance);
+
+        //standard error
+        standard_error = standard_dev / std::sqrt(score_list.size());
+
+        std::ofstream outFile("scores.txt", std::ios::app);
+        if(outFile.is_open()){
+            outFile << std::fixed << std::setprecision(2);
+            outFile <<"NUM_GAMES: " << NUM_GAMES << ','
+                    <<"RISK_FACTOR: " << RISK_FACTOR << '\n'
+                    << "median: " << median << '\n'
+                    << "mean: " << mean << '\n'
+                    << "best: " << best << '\n'
+                    << "worst: " << worst << '\n'
+                    << "standard deviation: " << standard_dev << '\n'
+                    << "standard error: " << standard_error << '\n'
+                    << std::string(40, '-') << '\n';
+            outFile.close();
+        } else{
+            std::cerr << "Error opening scores.txt";
+        }
+        return 0;
+    }
 
     InitWindow(screenWidth, screenHeight, "Snake");
     SetTargetFPS(60);
 
     Game game;
     ResetGame(game);                                 
-    const float MOVE_INTERVAL = 0.07f;            //move every 0.15s
-
-    
+    const float MOVE_INTERVAL = 0.15f;            //move every 0.15s
 
     while(!WindowShouldClose()){
         HandleInput(game);
@@ -293,5 +369,12 @@ int main(){
     }
 
     CloseWindow();
+    // std::ofstream outFile("scores.txt", std::ios::app);
+    // if(outFile.is_open()){
+    //     outFile << '\n' << std::string(30, '-') << '\n';
+    //     outFile.close();
+    // } else{
+    //     std::cerr << "Error opening scores.txt";
+    // }
     return 0;
 }
